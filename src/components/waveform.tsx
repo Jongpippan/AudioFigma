@@ -2,11 +2,16 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { TimelineComment } from "@/lib/database.types";
+import { getBarMarkers } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 type Props = {
   url: string;
   duration: number;
+  timelineDuration: number;
+  bpm: number;
+  barOffset: number;
+  editingBarOffset: boolean;
   currentTime: number;
   active: boolean;
   comments: TimelineComment[];
@@ -37,7 +42,7 @@ async function decodePeaks(url: string) {
   }
 }
 
-export function Waveform({ url, duration, currentTime, active, comments, onSelect }: Props) {
+export function Waveform({ url, duration, timelineDuration, bpm, barOffset, editingBarOffset, currentTime, active, comments, onSelect }: Props) {
   const [peaks, setPeaks] = useState<number[]>([]);
   const [error, setError] = useState("");
 
@@ -50,19 +55,22 @@ export function Waveform({ url, duration, currentTime, active, comments, onSelec
   }, [url]);
 
   const bars = useMemo(() => peaks.map((peak, index) => ({ x: (index / BARS) * 100, height: Math.max(4, peak * 76) })), [peaks]);
-  const progress = duration > 0 ? Math.min(100, (currentTime / duration) * 100) : 0;
+  const barMarkers = useMemo(() => getBarMarkers(timelineDuration, bpm, barOffset), [barOffset, bpm, timelineDuration]);
+  const trackWidth = Math.min(100, (duration / timelineDuration) * 100);
+  const progress = Math.min(100, (currentTime / timelineDuration) * 100);
 
   function select(event: React.MouseEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
-    onSelect(Math.max(0, Math.min(duration, ((event.clientX - rect.left) / rect.width) * duration)));
+    const time = ((event.clientX - rect.left) / rect.width) * timelineDuration;
+    onSelect(Math.max(0, Math.min(duration, time)));
   }
 
   return (
     <div
-      className={cn("relative h-28 cursor-crosshair overflow-hidden rounded-xl border bg-slate-950/70", active ? "border-cyan-400/30" : "border-white/[0.06]")}
+      className={cn("relative h-28 cursor-crosshair overflow-hidden border-y border-r bg-slate-950/70", editingBarOffset ? "border-amber-300/50 bg-amber-300/[0.025]" : active ? "border-cyan-400/30" : "border-white/[0.06]")}
       onClick={select}
       role="slider"
-      aria-label="파형에서 재생 또는 댓글 위치 선택"
+      aria-label={editingBarOffset ? "1마디 시작점을 선택할 파형" : "파형에서 재생 또는 댓글 위치 선택"}
       aria-valuemin={0}
       aria-valuemax={duration}
       aria-valuenow={active ? currentTime : 0}
@@ -72,27 +80,31 @@ export function Waveform({ url, duration, currentTime, active, comments, onSelec
         if (event.key === "ArrowLeft") onSelect(Math.max(0, currentTime - 1));
       }}
     >
-      <div className="absolute inset-0 opacity-20" style={{ backgroundImage: "linear-gradient(to right, rgba(148,163,184,.2) 1px, transparent 1px)", backgroundSize: "5% 100%" }} />
-      {peaks.length ? (
-        <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100" aria-hidden="true">
-          {bars.map((bar, index) => <rect key={index} x={bar.x} y={(100 - bar.height) / 2} width={0.34} height={bar.height} rx={0.17} className={bar.x <= progress && active ? "fill-cyan-300" : "fill-slate-500"} />)}
-        </svg>
-      ) : (
-        <div className="absolute inset-0 grid place-items-center text-xs text-slate-600">{error || "파형 분석 중…"}</div>
-      )}
+      {barMarkers.map((marker) => <div key={`${marker.bar}-${marker.time}`} data-testid="waveform-bar-marker" className="pointer-events-none absolute inset-y-0 border-l border-indigo-300/15" style={{ left: `${(marker.time / timelineDuration) * 100}%` }} />)}
+      <div className="absolute inset-y-0 left-0 bg-slate-900/50" style={{ width: `${trackWidth}%` }}>
+        {peaks.length ? (
+          <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100" aria-label="오디오 파형">
+            {bars.map((bar, index) => <rect key={index} x={bar.x} y={(100 - bar.height) / 2} width={0.34} height={bar.height} rx={0.17} className={(bar.x / 100) * duration <= currentTime && active ? "fill-cyan-300" : "fill-slate-500"} />)}
+          </svg>
+        ) : (
+          <div className="absolute inset-0 grid place-items-center text-xs text-slate-600">{error || "파형 분석 중…"}</div>
+        )}
+      </div>
       {comments.map((comment, index) => (
         <button
           key={comment.id}
           type="button"
           className="absolute top-2 z-20 grid size-6 -translate-x-1/2 place-items-center rounded-full border border-amber-200/30 bg-amber-300 text-[10px] font-black text-slate-950 shadow-lg shadow-black/40"
-          style={{ left: `${Math.min(100, (comment.position_seconds / duration) * 100)}%` }}
+          style={{ left: `${Math.min(100, (comment.position_seconds / timelineDuration) * 100)}%` }}
           title={`${comment.author_name}: ${comment.body}`}
           onClick={(event) => { event.stopPropagation(); onSelect(comment.position_seconds); }}
         >
           {index + 1}
         </button>
       ))}
+      {barOffset >= 0 && barOffset <= timelineDuration && <div className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-amber-300" style={{ left: `${(barOffset / timelineDuration) * 100}%` }} />}
       {active && <div className="pointer-events-none absolute inset-y-0 z-10 w-px bg-white shadow-[0_0_8px_white]" style={{ left: `${progress}%` }} />}
+      {editingBarOffset && <div className="pointer-events-none absolute inset-x-0 bottom-2 z-30 text-center text-[10px] font-semibold text-amber-200">이 트랙에서 1마디 시작 지점을 클릭하세요</div>}
     </div>
   );
 }

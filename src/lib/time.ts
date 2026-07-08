@@ -14,3 +14,23 @@ export function barAtTime(seconds: number, bpm: number, offset: number) {
   const barDuration = secondsPerBar(bpm);
   return Math.floor(relative / barDuration) + 1;
 }
+
+export function getBarMarkers(duration: number, bpm: number, offset: number) {
+  if (duration <= 0) return [];
+  const barDuration = secondsPerBar(bpm);
+  const firstBar = Math.floor(-offset / barDuration) + 1;
+  const lastBar = Math.ceil((duration - offset) / barDuration) + 1;
+  const markers: { time: number; bar: number }[] = [];
+
+  for (let bar = firstBar; bar <= lastBar; bar += 1) {
+    const time = offset + (bar - 1) * barDuration;
+    if (time >= 0 && time <= duration) markers.push({ time, bar });
+  }
+
+  return markers;
+}
+
+export function timeTickInterval(pixelsPerSecond: number, minimumLabelGap = 72) {
+  const candidates = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600];
+  return candidates.find((seconds) => seconds * pixelsPerSecond >= minimumLabelGap) ?? 600;
+}

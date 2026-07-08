@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, LoaderCircle, MessageSquarePlus, Music2, Pause, Play, Plus, Upload, X } from "lucide-react";
+import { Check, Copy, Flag, LoaderCircle, MessageSquarePlus, Music2, Pause, Play, Plus, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -13,6 +13,11 @@ import { getSupabase } from "@/lib/supabase";
 import { barAtTime, formatTime } from "@/lib/time";
 
 type TrackWithUrl = Track & { url: string };
+
+const TRACK_HEADER_WIDTH = 168;
+const BASE_PIXELS_PER_SECOND = 48;
+const MIN_ZOOM = 0.5;
+const MAX_ZOOM = 4;
 
 function readDuration(file: File) {
   return new Promise<number>((resolve, reject) => {
@@ -29,11 +34,17 @@ function readDuration(file: File) {
   });
 }
 
+function isEditableTarget(target: EventTarget | null) {
+  return target instanceof HTMLElement && (target.matches("input, textarea, button, select") || target.isContentEditable);
+}
+
 export function ProjectWorkspace({ slug }: { slug: string }) {
   const router = useRouter();
   const audioRef = useRef<HTMLAudioElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const timelineScrollRef = useRef<HTMLDivElement>(null);
   const pendingSeekRef = useRef(0);
+  const dragDepthRef = useRef(0);
   const [project, setProject] = useState<Project | null>(null);
   const [tracks, setTracks] = useState<TrackWithUrl[]>([]);
   const [comments, setComments] = useState<TimelineComment[]>([]);
@@ -49,6 +60,10 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [editingBarOffset, setEditingBarOffset] = useState(false);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const [timelineZoom, setTimelineZoom] = useState(1);
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
 
   const loadProject = useCallback(async () => {
     const supabase = getSupabase();
@@ -83,9 +98,21 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
   }, [loadProject, project]);
+  useEffect(() => {
+    const node = timelineScrollRef.current;
+    if (!node) return;
+    const observer = new ResizeObserver(([entry]) => setTimelineViewportWidth(entry.contentRect.width));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loading]);
 
   const activeTrack = tracks.find((track) => track.id === activeTrackId) ?? tracks[0];
   const maxDuration = Math.max(0, ...tracks.map((track) => track.duration_seconds));
+  const timelineDuration = Math.max(1, maxDuration);
+  const availableTimelineWidth = Math.max(480, timelineViewportWidth - TRACK_HEADER_WIDTH);
+  const baseTimelineWidth = Math.max(availableTimelineWidth, Math.ceil(timelineDuration * BASE_PIXELS_PER_SECOND));
+  const timelineWidth = Math.max(availableTimelineWidth, Math.ceil(baseTimelineWidth * timelineZoom));
+  const effectivePixelsPerSecond = timelineWidth / timelineDuration;
 
   useEffect(() => {
     const audio = audioRef.current;
@@ -95,11 +122,26 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
     setCurrentTime(pendingSeekRef.current);
   }, [activeTrackId]);
 
-  async function togglePlayback() {
+  const togglePlayback = useCallback(async () => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (audio.paused) { await audio.play(); setPlaying(true); } else { audio.pause(); setPlaying(false); }
-  }
+    if (audio.paused) {
+      try { await audio.play(); setPlaying(true); } catch { setError("오디오를 재생할 수 없습니다."); }
+    } else {
+      audio.pause();
+      setPlaying(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.code !== "Space" || event.repeat || isEditableTarget(event.target) || !activeTrack) return;
+      event.preventDefault();
+      void togglePlayback();
+    }
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeTrack, togglePlayback]);
 
   function seek(trackId: string, position: number, compose = true) {
     const targetTrack = tracks.find((track) => track.id === trackId);
@@ -115,34 +157,43 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
     });
   }
 
-  async function uploadTrack(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
+  async function uploadFiles(files: File[]) {
     const supabase = getSupabase();
-    if (!file || !project || !supabase) return;
-    event.target.value = "";
-    if (!file.type.startsWith("audio/")) { setError("오디오 파일만 업로드할 수 있습니다."); return; }
-    if (file.size > 50 * 1024 * 1024) { setError("파일 크기는 50MB 이하여야 합니다."); return; }
+    if (!files.length || !project || !supabase) return;
+    const invalidFile = files.find((file) => !file.type.startsWith("audio/") || file.size > 50 * 1024 * 1024);
+    if (invalidFile) {
+      setError(!invalidFile.type.startsWith("audio/") ? `${invalidFile.name}: 오디오 파일만 업로드할 수 있습니다.` : `${invalidFile.name}: 파일 크기는 50MB 이하여야 합니다.`);
+      return;
+    }
     setUploading(true);
     setError("");
     try {
-      const duration = await readDuration(file);
-      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-      const storagePath = `${project.id}/${crypto.randomUUID()}-${safeName}`;
-      const { error: storageError } = await supabase.storage.from("audio-tracks").upload(storagePath, file, { contentType: file.type, upsert: false });
-      if (storageError) throw storageError;
-      const { error: insertError } = await supabase.from("tracks").insert({
-        project_id: project.id,
-        name: file.name,
-        storage_path: storagePath,
-        mime_type: file.type,
-        duration_seconds: duration,
-        sort_order: tracks.length,
-      });
-      if (insertError) { await supabase.storage.from("audio-tracks").remove([storagePath]); throw insertError; }
+      for (const [index, file] of files.entries()) {
+        const duration = await readDuration(file);
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const storagePath = `${project.id}/${crypto.randomUUID()}-${safeName}`;
+        const { error: storageError } = await supabase.storage.from("audio-tracks").upload(storagePath, file, { contentType: file.type, upsert: false });
+        if (storageError) throw storageError;
+        const { error: insertError } = await supabase.from("tracks").insert({
+          project_id: project.id,
+          name: file.name,
+          storage_path: storagePath,
+          mime_type: file.type,
+          duration_seconds: duration,
+          sort_order: tracks.length + index,
+        });
+        if (insertError) { await supabase.storage.from("audio-tracks").remove([storagePath]); throw insertError; }
+      }
       await loadProject();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "업로드에 실패했습니다.");
     } finally { setUploading(false); }
+  }
+
+  function uploadTrack(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = "";
+    void uploadFiles(files);
   }
 
   async function updateTiming(values: { bpm?: number; bar_offset_seconds?: number }) {
@@ -151,6 +202,30 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
     setProject({ ...project, ...values });
     const { error: updateError } = await supabase.from("projects").update(values).eq("id", project.id);
     if (updateError) { setError(updateError.message); await loadProject(); }
+  }
+
+  function selectWaveformPosition(trackId: string, time: number) {
+    if (editingBarOffset) {
+      setEditingBarOffset(false);
+      setSelectedPosition(null);
+      void updateTiming({ bar_offset_seconds: time });
+      return;
+    }
+    seek(trackId, time);
+  }
+
+  function changeZoom(next: number) {
+    const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+    const viewport = timelineScrollRef.current;
+    const centerTime = viewport
+      ? Math.max(0, ((viewport.scrollLeft + viewport.clientWidth / 2 - TRACK_HEADER_WIDTH) / timelineWidth) * timelineDuration)
+      : currentTime;
+    setTimelineZoom(clamped);
+    requestAnimationFrame(() => {
+      if (!viewport) return;
+      const nextWidth = Math.max(availableTimelineWidth, Math.ceil(baseTimelineWidth * clamped));
+      viewport.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + (centerTime / timelineDuration) * nextWidth - viewport.clientWidth / 2);
+    });
   }
 
   async function addComment(event: React.FormEvent) {
@@ -201,31 +276,63 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
 
       <section className="overflow-hidden rounded-2xl border border-white/[0.08] bg-white/[0.025] shadow-2xl shadow-black/30">
         <div className="flex flex-wrap items-center gap-3 border-b border-white/[0.07] px-4 py-3">
-          <Button size="icon" onClick={togglePlayback} disabled={!activeTrack} aria-label={playing ? "일시 정지" : "재생"}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</Button>
+          <Button size="icon" onClick={() => void togglePlayback()} disabled={!activeTrack} aria-label={playing ? "일시 정지" : "재생"}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</Button>
           <span className="min-w-24 font-mono text-sm font-semibold text-white">{formatTime(currentTime)}</span>
+          <span className="hidden text-[10px] text-slate-600 sm:inline">Space 재생/정지</span>
           <div className="h-5 w-px bg-white/10" />
           <label className="flex items-center gap-2 text-xs text-slate-500">BPM <Input className="h-8 w-20" type="number" min={20} max={400} step="0.01" value={project.bpm} onChange={(event) => setProject({ ...project, bpm: Number(event.target.value) })} onBlur={(event) => void updateTiming({ bpm: Number(event.target.value) })} /></label>
-          <label className="flex flex-1 items-center gap-2 text-xs text-slate-500 sm:max-w-md">1마디 시작 <input className="min-w-28 flex-1 accent-cyan-300" type="range" min={0} max={Math.max(1, maxDuration)} step={0.01} value={Math.max(0, project.bar_offset_seconds)} onChange={(event) => setProject({ ...project, bar_offset_seconds: Number(event.target.value) })} onPointerUp={(event) => void updateTiming({ bar_offset_seconds: Number(event.currentTarget.value) })} onBlur={(event) => void updateTiming({ bar_offset_seconds: Number(event.currentTarget.value) })} /><span className="w-14 font-mono text-slate-300">{formatTime(project.bar_offset_seconds)}</span></label>
-          <input ref={fileRef} className="hidden" type="file" accept="audio/*" onChange={uploadTrack} />
+          <Button variant={editingBarOffset ? "default" : "secondary"} size="sm" aria-pressed={editingBarOffset} onClick={() => { setEditingBarOffset((current) => !current); setSelectedPosition(null); }}><Flag size={14} />{editingBarOffset ? "트랙에서 지점 선택 중" : "1마디 시작 수정"}</Button>
+          <span className="font-mono text-xs text-amber-200">{formatTime(project.bar_offset_seconds)}</span>
+          <div className="ml-auto flex items-center gap-1 rounded-lg border border-white/10 bg-black/20 p-1">
+            <Button variant="ghost" size="icon" className="size-7" aria-label="타임라인 축소" onClick={() => changeZoom(timelineZoom / 1.5)}><ZoomOut size={14} /></Button>
+            <input aria-label="타임라인 확대/축소" className="w-20 accent-cyan-300 sm:w-28" type="range" min={MIN_ZOOM} max={MAX_ZOOM} step={0.1} value={timelineZoom} onChange={(event) => changeZoom(Number(event.target.value))} />
+            <span className="w-12 text-center text-[10px] tabular-nums text-slate-500">{Math.round(timelineZoom * 100)}%</span>
+            <Button variant="ghost" size="icon" className="size-7" aria-label="타임라인 확대" onClick={() => changeZoom(timelineZoom * 1.5)}><ZoomIn size={14} /></Button>
+          </div>
+          <input ref={fileRef} className="hidden" type="file" accept="audio/*" multiple onChange={uploadTrack} />
           <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={uploading}>{uploading ? <LoaderCircle className="animate-spin" size={14} /> : <Upload size={14} />}{uploading ? "업로드 중" : "트랙 추가"}</Button>
         </div>
 
-        <TimelineRuler duration={maxDuration || 1} bpm={project.bpm} offset={project.bar_offset_seconds} currentTime={currentTime} onSeek={(time) => activeTrack && seek(activeTrack.id, time, false)} />
         <div className="grid lg:grid-cols-[minmax(0,1fr)_340px]">
-          <div className="min-w-0 divide-y divide-white/[0.06]">
-            {tracks.length === 0 ? (
-              <div className="grid min-h-80 place-items-center p-8 text-center">
-                <div><span className="mx-auto grid size-14 place-items-center rounded-2xl border border-dashed border-cyan-300/30 bg-cyan-300/[0.04] text-cyan-300"><Music2 size={24} /></span><h2 className="mt-5 font-bold text-white">첫 오디오 트랙을 올려주세요</h2><p className="mt-2 text-sm text-slate-500">최대 50MB · MP3, WAV, M4A, OGG 등</p><Button className="mt-5" onClick={() => fileRef.current?.click()}><Plus size={16} /> 트랙 추가</Button></div>
+          <div
+            className="relative min-w-0 bg-slate-950/25"
+            onDragEnter={(event) => { event.preventDefault(); dragDepthRef.current += 1; setDraggingFiles(true); }}
+            onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; }}
+            onDragLeave={(event) => { event.preventDefault(); dragDepthRef.current -= 1; if (dragDepthRef.current <= 0) { dragDepthRef.current = 0; setDraggingFiles(false); } }}
+            onDrop={(event) => { event.preventDefault(); dragDepthRef.current = 0; setDraggingFiles(false); void uploadFiles(Array.from(event.dataTransfer.files)); }}
+          >
+            {draggingFiles && <div className="pointer-events-none absolute inset-3 z-50 grid place-items-center rounded-xl border-2 border-dashed border-cyan-300 bg-slate-950/90 text-sm font-bold text-cyan-200"><span className="flex items-center gap-2"><Upload size={18} />오디오 파일을 놓아 업로드</span></div>}
+            <div ref={timelineScrollRef} className="overflow-x-auto overscroll-x-contain pb-2" data-testid="timeline-scroll">
+              <div style={{ width: TRACK_HEADER_WIDTH + timelineWidth }}>
+                <div className="grid" style={{ gridTemplateColumns: `${TRACK_HEADER_WIDTH}px ${timelineWidth}px` }}>
+                  <div className="sticky left-0 z-40 flex h-[72px] flex-col justify-center border-b border-r border-white/[0.08] bg-slate-950/95 px-4">
+                    <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500">Time</span>
+                    <span className="mt-3 text-[10px] font-bold uppercase tracking-widest text-indigo-300/60">Bars</span>
+                  </div>
+                  <TimelineRuler duration={timelineDuration} bpm={project.bpm} offset={project.bar_offset_seconds} currentTime={currentTime} pixelsPerSecond={effectivePixelsPerSecond} onSeek={(time) => activeTrack && seek(activeTrack.id, time, false)} />
+                </div>
+
+                {tracks.length === 0 ? (
+                  <div className="grid min-h-80 place-items-center border-b border-white/[0.06] p-8 text-center">
+                    <div><span className="mx-auto grid size-14 place-items-center rounded-2xl border border-dashed border-cyan-300/30 bg-cyan-300/[0.04] text-cyan-300"><Music2 size={24} /></span><h2 className="mt-5 font-bold text-white">첫 오디오 트랙을 올려주세요</h2><p className="mt-2 text-sm text-slate-500">여기에 drag & drop · 최대 50MB · 다중 선택 가능</p><Button className="mt-5" onClick={() => fileRef.current?.click()}><Plus size={16} /> 트랙 추가</Button></div>
+                  </div>
+                ) : tracks.map((track) => {
+                  const trackComments = comments.filter((comment) => comment.track_id === track.id);
+                  return (
+                    <article key={track.id} className="grid border-b border-white/[0.06]" style={{ gridTemplateColumns: `${TRACK_HEADER_WIDTH}px ${timelineWidth}px` }}>
+                      <div className="sticky left-0 z-40 min-w-0 border-r border-white/[0.08] bg-[#090c12] px-4 py-5">
+                        <div className="flex items-center gap-2"><span className={`size-2 shrink-0 rounded-full ${track.id === activeTrack?.id ? "bg-cyan-300" : "bg-slate-700"}`} /><h2 className="truncate text-sm font-bold text-slate-200" title={track.name}>{track.name}</h2></div>
+                        <p className="mt-2 pl-4 font-mono text-[10px] text-slate-600">{formatTime(track.duration_seconds)} · {trackComments.length} comments</p>
+                      </div>
+                      <div className="py-3">
+                        <Waveform url={track.url} duration={track.duration_seconds} timelineDuration={timelineDuration} bpm={project.bpm} barOffset={project.bar_offset_seconds} editingBarOffset={editingBarOffset} currentTime={track.id === activeTrack?.id ? currentTime : 0} active={track.id === activeTrack?.id} comments={trackComments} onSelect={(time) => selectWaveformPosition(track.id, time)} />
+                      </div>
+                    </article>
+                  );
+                })}
               </div>
-            ) : tracks.map((track) => {
-              const trackComments = comments.filter((comment) => comment.track_id === track.id);
-              return (
-                <article key={track.id} className="grid gap-3 p-4 sm:grid-cols-[160px_minmax(0,1fr)]">
-                  <div className="min-w-0 py-1"><div className="flex items-center gap-2"><span className={`size-2 rounded-full ${track.id === activeTrack?.id ? "bg-cyan-300" : "bg-slate-700"}`} /><h2 className="truncate text-sm font-bold text-slate-200" title={track.name}>{track.name}</h2></div><p className="mt-2 pl-4 font-mono text-[10px] text-slate-600">{formatTime(track.duration_seconds)} · {trackComments.length} comments</p></div>
-                  <Waveform url={track.url} duration={track.duration_seconds} currentTime={track.id === activeTrack?.id ? currentTime : 0} active={track.id === activeTrack?.id} comments={trackComments} onSelect={(time) => seek(track.id, time)} />
-                </article>
-              );
-            })}
+            </div>
+            <p className="border-t border-white/[0.05] px-4 py-2 text-center text-[10px] text-slate-600">확대 후 아래 가로 스크롤로 이동 · Shift + 휠도 지원</p>
           </div>
 
           <aside className="border-t border-white/[0.07] bg-black/20 lg:border-l lg:border-t-0">
