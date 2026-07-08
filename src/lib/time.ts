@@ -16,18 +16,43 @@ export function barAtTime(seconds: number, bpm: number, offset: number) {
 }
 
 export function getBarMarkers(duration: number, bpm: number, offset: number) {
+  return getMusicalGridLines(duration, bpm, offset, 1).map(({ time, bar }) => ({ time, bar }));
+}
+
+export type MusicalGridDivision = 1 | 4 | 8;
+export type MusicalGridLine = {
+  time: number;
+  bar: number;
+  beat: number;
+  subdivision?: number;
+  kind: "bar" | "beat" | "subdivision";
+};
+
+export function getMusicalGridLines(duration: number, bpm: number, offset: number, division: MusicalGridDivision) {
   if (duration <= 0) return [];
   const barDuration = secondsPerBar(bpm);
   const firstBar = Math.floor(-offset / barDuration) + 1;
   const lastBar = Math.ceil((duration - offset) / barDuration) + 1;
-  const markers: { time: number; bar: number }[] = [];
+  const lines: MusicalGridLine[] = [];
 
   for (let bar = firstBar; bar <= lastBar; bar += 1) {
-    const time = offset + (bar - 1) * barDuration;
-    if (time >= 0 && time <= duration) markers.push({ time, bar });
+    const barStart = offset + (bar - 1) * barDuration;
+    for (let step = 0; step < division; step += 1) {
+      const time = barStart + (step / division) * barDuration;
+      if (time < 0 || time > duration) continue;
+      const stepsPerBeat = division / 4;
+      const beat = division === 1 ? 1 : Math.floor(step / stepsPerBeat) + 1;
+      lines.push({
+        time,
+        bar,
+        beat,
+        subdivision: division === 8 ? step + 1 : undefined,
+        kind: step === 0 ? "bar" : step % stepsPerBeat === 0 ? "beat" : "subdivision",
+      });
+    }
   }
 
-  return markers;
+  return lines;
 }
 
 export function timeTickInterval(pixelsPerSecond: number, minimumLabelGap = 72) {

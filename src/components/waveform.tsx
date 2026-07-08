@@ -2,7 +2,7 @@
 
 import { useEffect, useId, useMemo, useState } from "react";
 import type { TimelineComment } from "@/lib/database.types";
-import { getBarMarkers } from "@/lib/time";
+import { barAtTime, formatTime, getMusicalGridLines, secondsPerBar, type MusicalGridDivision } from "@/lib/time";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -11,6 +11,7 @@ type Props = {
   timelineDuration: number;
   bpm: number;
   barOffset: number;
+  pixelsPerSecond: number;
   editingBarOffset: boolean;
   currentTime: number;
   active: boolean;
@@ -44,7 +45,7 @@ async function decodePeaks(url: string) {
   }
 }
 
-export function Waveform({ url, duration, timelineDuration, bpm, barOffset, editingBarOffset, currentTime, active, comments, onSelect }: Props) {
+export function Waveform({ url, duration, timelineDuration, bpm, barOffset, pixelsPerSecond, editingBarOffset, currentTime, active, comments, onSelect }: Props) {
   const clipId = useId().replaceAll(":", "");
   const [peaks, setPeaks] = useState<number[]>([]);
   const [error, setError] = useState("");
@@ -63,7 +64,9 @@ export function Waveform({ url, duration, timelineDuration, bpm, barOffset, edit
     const lower = peaks.map((peak, index) => `${(index / (peaks.length - 1)) * 1000},${50 + peak * 45}`).reverse();
     return `M${upper[0]} L${upper.slice(1).join(" L")} L${lower.join(" L")} Z`;
   }, [peaks]);
-  const barMarkers = useMemo(() => getBarMarkers(timelineDuration, bpm, barOffset), [barOffset, bpm, timelineDuration]);
+  const pixelsPerBar = secondsPerBar(bpm) * pixelsPerSecond;
+  const gridDivision: MusicalGridDivision = pixelsPerBar >= 360 ? 8 : pixelsPerBar >= 120 ? 4 : 1;
+  const gridLines = useMemo(() => getMusicalGridLines(timelineDuration, bpm, barOffset, gridDivision), [barOffset, bpm, gridDivision, timelineDuration]);
   const trackWidth = Math.min(100, (duration / timelineDuration) * 100);
   const progress = Math.min(100, (currentTime / timelineDuration) * 100);
   const trackProgress = active ? Math.min(100, (currentTime / duration) * 100) : 0;
@@ -89,7 +92,7 @@ export function Waveform({ url, duration, timelineDuration, bpm, barOffset, edit
         if (event.key === "ArrowLeft") onSelect(Math.max(0, currentTime - 1));
       }}
     >
-      {barMarkers.map((marker) => <div key={`${marker.bar}-${marker.time}`} data-testid="waveform-bar-marker" className="pointer-events-none absolute inset-y-0 border-l border-indigo-300/15" style={{ left: `${(marker.time / timelineDuration) * 100}%` }} />)}
+      {gridLines.map((line) => <div key={`${line.bar}-${line.time}-${line.kind}`} data-testid={line.kind === "bar" ? "waveform-bar-marker" : "waveform-subdivision-marker"} className={line.kind === "bar" ? "pointer-events-none absolute inset-y-0 border-l border-indigo-300/20" : line.kind === "beat" ? "pointer-events-none absolute inset-y-0 border-l border-indigo-200/10" : "pointer-events-none absolute inset-y-0 border-l border-white/[0.04]"} style={{ left: `${(line.time / timelineDuration) * 100}%` }} />)}
       <div className="absolute inset-y-0 left-0 bg-slate-900/50" style={{ width: `${trackWidth}%` }}>
         {peaks.length ? (
           <svg data-testid="waveform-envelope" className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 1000 100" aria-label="오디오 파형">
@@ -107,7 +110,7 @@ export function Waveform({ url, duration, timelineDuration, bpm, barOffset, edit
           type="button"
           className="absolute top-2 z-20 grid size-6 -translate-x-1/2 place-items-center rounded-full border border-amber-200/30 bg-amber-300 text-[10px] font-black text-slate-950 shadow-lg shadow-black/40"
           style={{ left: `${Math.min(100, (comment.position_seconds / timelineDuration) * 100)}%` }}
-          title={`${comment.author_name}: ${comment.body}`}
+          title={`${formatTime(comment.position_seconds)} · ${barAtTime(comment.position_seconds, bpm, barOffset)}마디 — ${comment.author_name}: ${comment.body}`}
           onClick={(event) => { event.stopPropagation(); onSelect(comment.position_seconds); }}
         >
           {index + 1}

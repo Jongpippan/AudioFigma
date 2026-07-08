@@ -348,7 +348,7 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
                         <p className="mt-2 pl-4 font-mono text-[10px] text-slate-600">{formatTime(track.duration_seconds)} · {trackComments.length} comments</p>
                       </div>
                       <div className="py-3">
-                        <Waveform url={track.url} duration={track.duration_seconds} timelineDuration={timelineDuration} bpm={project.bpm} barOffset={project.bar_offset_seconds} editingBarOffset={editingBarOffset} currentTime={track.id === activeTrack?.id ? currentTime : 0} active={track.id === activeTrack?.id} comments={trackComments} onSelect={(time) => selectWaveformPosition(track.id, time)} />
+                        <Waveform url={track.url} duration={track.duration_seconds} timelineDuration={timelineDuration} bpm={project.bpm} barOffset={project.bar_offset_seconds} pixelsPerSecond={effectivePixelsPerSecond} editingBarOffset={editingBarOffset} currentTime={track.id === activeTrack?.id ? currentTime : 0} active={track.id === activeTrack?.id} comments={trackComments} onSelect={(time) => selectWaveformPosition(track.id, time)} />
                       </div>
                     </article>
                   );
@@ -371,7 +371,7 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
             <div className="max-h-[620px] overflow-y-auto p-3">
               {comments.length === 0 ? <p className="px-2 py-10 text-center text-xs leading-5 text-slate-600">파형의 위치를 누르면<br />첫 코멘트를 남길 수 있습니다.</p> : comments.map((comment) => {
                 const track = tracks.find((item) => item.id === comment.track_id);
-                return <button key={comment.id} className="mb-2 block w-full rounded-xl border border-transparent p-3 text-left hover:border-white/[0.07] hover:bg-white/[0.03]" onClick={() => seek(comment.track_id, comment.position_seconds, false)}><div className="flex items-center justify-between gap-3"><strong className="truncate text-xs text-slate-200">{comment.author_name}</strong><span className="shrink-0 font-mono text-[10px] text-amber-300">{formatTime(comment.position_seconds)}</span></div><p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-slate-400">{comment.body}</p><p className="mt-2 truncate text-[10px] text-slate-700">{track?.name}</p></button>;
+                return <button key={comment.id} className="mb-2 block w-full rounded-xl border border-transparent p-3 text-left hover:border-white/[0.07] hover:bg-white/[0.03]" onClick={() => seek(comment.track_id, comment.position_seconds, false)}><div className="flex items-center justify-between gap-3"><strong className="truncate text-xs text-slate-200">{comment.author_name}</strong><span data-testid="comment-position" className="shrink-0 font-mono text-[10px] text-amber-300">{formatTime(comment.position_seconds)} · {barAtTime(comment.position_seconds, project.bpm, project.bar_offset_seconds)}마디</span></div><p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-slate-400">{comment.body}</p><p className="mt-2 truncate text-[10px] text-slate-700">{track?.name}</p></button>;
               })}
             </div>
           </aside>

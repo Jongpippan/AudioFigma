@@ -70,6 +70,9 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   expect(Number(await zoomControl.getAttribute("min"))).toBeLessThan(0.5);
   await zoomControl.fill("4");
   await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await expect(page.getByTestId("bar-label").first()).toHaveText("1");
+  await expect(page.getByTestId("bar-label").filter({ hasText: "마디" })).toHaveCount(0);
+  await expect(page.getByTestId("subdivision-label").filter({ hasText: /^16\.3\.5$/ })).toHaveCount(1);
   await page.getByTestId("timeline-scroll").evaluate((element) => { element.scrollLeft = 300; });
   await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
 
@@ -78,6 +81,9 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   expect(rulerBar).not.toBeNull();
   expect(waveformBar).not.toBeNull();
   expect(Math.abs((rulerBar?.x ?? 0) - (waveformBar?.x ?? 0))).toBeLessThan(1);
+  const rulerSubdivision = await page.getByTestId("ruler-subdivision-marker").first().boundingBox();
+  const waveformSubdivision = await page.getByTestId("waveform-subdivision-marker").first().boundingBox();
+  expect(Math.abs((rulerSubdivision?.x ?? 0) - (waveformSubdivision?.x ?? 0))).toBeLessThan(1);
 
   await page.getByRole("button", { name: "전체 트랙 보기" }).click();
   await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
@@ -109,4 +115,5 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   await page.getByPlaceholder("이 순간에 대한 의견을 남겨주세요.").fill("UI comment verification");
   await page.getByRole("button", { name: "등록" }).click();
   await expect(page.getByText("UI comment verification", { exact: true })).toBeVisible();
+  await expect(page.getByTestId("comment-position").last()).toHaveText(/\d+:\d+\.\d · -?\d+마디/);
 });

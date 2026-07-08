@@ -10,6 +10,7 @@
 - 트랙 재생, 파형 탐색, 시간 표시
 - BPM 기반 4/4 마디 눈금과 움직일 수 있는 1마디 시작점
 - 공통 축척의 시간/마디 ruler, 전체 보기–400% zoom과 가로 scroll
+- zoom에 따라 자동 전환되는 마디·4박·8분 subdivision grid와 시간/마디 댓글 위치
 - 파일 선택 및 다중 오디오 drag & drop 업로드
 - Space 키 재생/정지
 - 트랙·시간 위치별 닉네임 코멘트와 Supabase Realtime 갱신
