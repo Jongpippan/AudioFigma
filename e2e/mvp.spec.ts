@@ -52,7 +52,7 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   await expect(page.getByLabel("BPM")).toHaveValue("128");
   await expect(page.getByText("Bars", { exact: true })).toBeVisible();
 
-  const wavBase64 = createSilentWav(10).toString("base64");
+  const wavBase64 = createSilentWav(60).toString("base64");
   const dataTransfer = await page.evaluateHandle((base64) => {
     const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
     const transfer = new DataTransfer();
@@ -63,8 +63,12 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   await expect(page.getByText("오디오 파일을 놓아 업로드", { exact: true })).toBeVisible();
   await page.getByTestId("timeline-scroll").dispatchEvent("drop", { dataTransfer });
   await expect(page.getByText("browser-verification.wav", { exact: true }).first()).toBeVisible();
+  await expect(page.getByTestId("waveform-envelope")).toBeVisible();
+  await expect(page.getByTestId("waveform-envelope").locator("path")).toHaveCount(2);
 
-  await page.getByLabel("타임라인 확대/축소").fill("4");
+  const zoomControl = page.getByLabel("타임라인 확대/축소");
+  expect(Number(await zoomControl.getAttribute("min"))).toBeLessThan(0.5);
+  await zoomControl.fill("4");
   await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
   await page.getByTestId("timeline-scroll").evaluate((element) => { element.scrollLeft = 300; });
   await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
@@ -74,6 +78,13 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   expect(rulerBar).not.toBeNull();
   expect(waveformBar).not.toBeNull();
   expect(Math.abs((rulerBar?.x ?? 0) - (waveformBar?.x ?? 0))).toBeLessThan(1);
+
+  await page.getByRole("button", { name: "전체 트랙 보기" }).click();
+  await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await page.getByTestId("timeline-scroll").dispatchEvent("wheel", { ctrlKey: true, deltaY: -400, clientX: 500 });
+  await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  await page.getByRole("button", { name: "전체 트랙 보기" }).click();
+  await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
 
   const timingSaved = page.waitForResponse((response) =>
     response.url().includes("/rest/v1/projects")
@@ -86,7 +97,7 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   await waveform.click({ position: { x: (waveformBox?.width ?? 400) * 0.25, y: 80 } });
   await timingSaved;
   await page.reload();
-  await expect(page.getByText("0:02.5", { exact: true })).toBeVisible();
+  await expect(page.getByText("0:15.0", { exact: true })).toBeVisible();
 
   await page.locator("body").press("Space");
   await expect(page.getByRole("button", { name: "일시 정지" })).toBeVisible();

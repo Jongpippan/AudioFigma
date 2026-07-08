@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { TimelineComment } from "@/lib/database.types";
 import { getBarMarkers } from "@/lib/time";
 import { cn } from "@/lib/utils";
@@ -18,7 +18,7 @@ type Props = {
   onSelect: (time: number) => void;
 };
 
-const BARS = 180;
+const PEAK_COUNT = 1600;
 
 async function decodePeaks(url: string) {
   const response = await fetch(url);
@@ -27,22 +27,25 @@ async function decodePeaks(url: string) {
   try {
     const buffer = await context.decodeAudioData(await response.arrayBuffer());
     const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
-    const block = Math.max(1, Math.floor(buffer.length / BARS));
-    return Array.from({ length: BARS }, (_, index) => {
+    const block = Math.max(1, Math.floor(buffer.length / PEAK_COUNT));
+    const rawPeaks = Array.from({ length: PEAK_COUNT }, (_, index) => {
       let peak = 0;
       const start = index * block;
       const end = Math.min(start + block, buffer.length);
-      for (let sample = start; sample < end; sample += Math.max(1, Math.floor(block / 32))) {
+      for (let sample = start; sample < end; sample += Math.max(1, Math.floor(block / 64))) {
         for (const channel of channels) peak = Math.max(peak, Math.abs(channel[sample] ?? 0));
       }
-      return Math.max(0.04, peak);
+      return peak;
     });
+    const maximum = Math.max(...rawPeaks, 0.001);
+    return rawPeaks.map((peak) => Math.max(0.025, peak / maximum));
   } finally {
     void context.close();
   }
 }
 
 export function Waveform({ url, duration, timelineDuration, bpm, barOffset, editingBarOffset, currentTime, active, comments, onSelect }: Props) {
+  const clipId = useId().replaceAll(":", "");
   const [peaks, setPeaks] = useState<number[]>([]);
   const [error, setError] = useState("");
 
@@ -54,10 +57,16 @@ export function Waveform({ url, duration, timelineDuration, bpm, barOffset, edit
     return () => { cancelled = true; };
   }, [url]);
 
-  const bars = useMemo(() => peaks.map((peak, index) => ({ x: (index / BARS) * 100, height: Math.max(4, peak * 76) })), [peaks]);
+  const waveformPath = useMemo(() => {
+    if (!peaks.length) return "";
+    const upper = peaks.map((peak, index) => `${(index / (peaks.length - 1)) * 1000},${50 - peak * 45}`);
+    const lower = peaks.map((peak, index) => `${(index / (peaks.length - 1)) * 1000},${50 + peak * 45}`).reverse();
+    return `M${upper[0]} L${upper.slice(1).join(" L")} L${lower.join(" L")} Z`;
+  }, [peaks]);
   const barMarkers = useMemo(() => getBarMarkers(timelineDuration, bpm, barOffset), [barOffset, bpm, timelineDuration]);
   const trackWidth = Math.min(100, (duration / timelineDuration) * 100);
   const progress = Math.min(100, (currentTime / timelineDuration) * 100);
+  const trackProgress = active ? Math.min(100, (currentTime / duration) * 100) : 0;
 
   function select(event: React.MouseEvent<HTMLDivElement>) {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -83,8 +92,10 @@ export function Waveform({ url, duration, timelineDuration, bpm, barOffset, edit
       {barMarkers.map((marker) => <div key={`${marker.bar}-${marker.time}`} data-testid="waveform-bar-marker" className="pointer-events-none absolute inset-y-0 border-l border-indigo-300/15" style={{ left: `${(marker.time / timelineDuration) * 100}%` }} />)}
       <div className="absolute inset-y-0 left-0 bg-slate-900/50" style={{ width: `${trackWidth}%` }}>
         {peaks.length ? (
-          <svg className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 100 100" aria-label="오디오 파형">
-            {bars.map((bar, index) => <rect key={index} x={bar.x} y={(100 - bar.height) / 2} width={0.34} height={bar.height} rx={0.17} className={(bar.x / 100) * duration <= currentTime && active ? "fill-cyan-300" : "fill-slate-500"} />)}
+          <svg data-testid="waveform-envelope" className="absolute inset-0 h-full w-full" preserveAspectRatio="none" viewBox="0 0 1000 100" aria-label="오디오 파형">
+            <defs><clipPath id={clipId}><rect x="0" y="0" width={trackProgress * 10} height="100" /></clipPath></defs>
+            <path d={waveformPath} className="fill-slate-500/80" />
+            <path d={waveformPath} className="fill-cyan-300" clipPath={`url(#${clipId})`} />
           </svg>
         ) : (
           <div className="absolute inset-0 grid place-items-center text-xs text-slate-600">{error || "파형 분석 중…"}</div>

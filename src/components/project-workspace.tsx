@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, Flag, LoaderCircle, MessageSquarePlus, Music2, Pause, Play, Plus, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, Copy, Flag, LoaderCircle, Maximize2, MessageSquarePlus, Music2, Pause, Play, Plus, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -16,7 +16,6 @@ type TrackWithUrl = Track & { url: string };
 
 const TRACK_HEADER_WIDTH = 168;
 const BASE_PIXELS_PER_SECOND = 48;
-const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 4;
 
 function readDuration(file: File) {
@@ -111,7 +110,9 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
   const timelineDuration = Math.max(1, maxDuration);
   const availableTimelineWidth = Math.max(480, timelineViewportWidth - TRACK_HEADER_WIDTH);
   const baseTimelineWidth = Math.max(availableTimelineWidth, Math.ceil(timelineDuration * BASE_PIXELS_PER_SECOND));
-  const timelineWidth = Math.max(availableTimelineWidth, Math.ceil(baseTimelineWidth * timelineZoom));
+  const fitZoom = availableTimelineWidth / baseTimelineWidth;
+  const effectiveZoom = Math.max(fitZoom, timelineZoom);
+  const timelineWidth = Math.ceil(baseTimelineWidth * effectiveZoom);
   const effectivePixelsPerSecond = timelineWidth / timelineDuration;
 
   useEffect(() => {
@@ -214,19 +215,36 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
     seek(trackId, time);
   }
 
-  function changeZoom(next: number) {
-    const clamped = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, next));
+  const changeZoom = useCallback((next: number, anchorClientX?: number) => {
+    const clamped = Math.max(fitZoom, Math.min(MAX_ZOOM, next));
     const viewport = timelineScrollRef.current;
-    const centerTime = viewport
-      ? Math.max(0, ((viewport.scrollLeft + viewport.clientWidth / 2 - TRACK_HEADER_WIDTH) / timelineWidth) * timelineDuration)
+    const viewportRect = viewport?.getBoundingClientRect();
+    const anchorX = viewport
+      ? Math.max(TRACK_HEADER_WIDTH, Math.min(viewport.clientWidth, anchorClientX === undefined ? viewport.clientWidth / 2 : anchorClientX - (viewportRect?.left ?? 0)))
+      : 0;
+    const anchorTime = viewport
+      ? Math.max(0, ((viewport.scrollLeft + anchorX - TRACK_HEADER_WIDTH) / timelineWidth) * timelineDuration)
       : currentTime;
     setTimelineZoom(clamped);
     requestAnimationFrame(() => {
       if (!viewport) return;
-      const nextWidth = Math.max(availableTimelineWidth, Math.ceil(baseTimelineWidth * clamped));
-      viewport.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + (centerTime / timelineDuration) * nextWidth - viewport.clientWidth / 2);
+      const nextWidth = Math.ceil(baseTimelineWidth * clamped);
+      viewport.scrollLeft = Math.max(0, TRACK_HEADER_WIDTH + (anchorTime / timelineDuration) * nextWidth - anchorX);
     });
-  }
+  }, [baseTimelineWidth, currentTime, fitZoom, timelineDuration, timelineWidth]);
+
+  useEffect(() => {
+    const viewport = timelineScrollRef.current;
+    if (!viewport) return;
+    function handleWheel(event: WheelEvent) {
+      if (!event.ctrlKey && !event.metaKey && !event.altKey) return;
+      event.preventDefault();
+      const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+      changeZoom(effectiveZoom * Math.exp(-delta * 0.0025), event.clientX);
+    }
+    viewport.addEventListener("wheel", handleWheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", handleWheel);
+  }, [changeZoom, effectiveZoom]);
 
   async function addComment(event: React.FormEvent) {
     event.preventDefault();
@@ -284,10 +302,11 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
           <Button variant={editingBarOffset ? "default" : "secondary"} size="sm" aria-pressed={editingBarOffset} onClick={() => { setEditingBarOffset((current) => !current); setSelectedPosition(null); }}><Flag size={14} />{editingBarOffset ? "트랙에서 지점 선택 중" : "1마디 시작 수정"}</Button>
           <span className="font-mono text-xs text-amber-200">{formatTime(project.bar_offset_seconds)}</span>
           <div className="ml-auto flex items-center gap-1 rounded-lg border border-white/10 bg-black/20 p-1">
-            <Button variant="ghost" size="icon" className="size-7" aria-label="타임라인 축소" onClick={() => changeZoom(timelineZoom / 1.5)}><ZoomOut size={14} /></Button>
-            <input aria-label="타임라인 확대/축소" className="w-20 accent-cyan-300 sm:w-28" type="range" min={MIN_ZOOM} max={MAX_ZOOM} step={0.1} value={timelineZoom} onChange={(event) => changeZoom(Number(event.target.value))} />
-            <span className="w-12 text-center text-[10px] tabular-nums text-slate-500">{Math.round(timelineZoom * 100)}%</span>
-            <Button variant="ghost" size="icon" className="size-7" aria-label="타임라인 확대" onClick={() => changeZoom(timelineZoom * 1.5)}><ZoomIn size={14} /></Button>
+            <Button variant="ghost" size="sm" className="h-7 px-2" aria-label="전체 트랙 보기" onClick={() => changeZoom(fitZoom)}><Maximize2 size={13} />전체</Button>
+            <Button variant="ghost" size="icon" className="size-7" aria-label="타임라인 축소" onClick={() => changeZoom(effectiveZoom / 1.5)}><ZoomOut size={14} /></Button>
+            <input aria-label="타임라인 확대/축소" className="w-20 accent-cyan-300 sm:w-28" type="range" min={fitZoom} max={MAX_ZOOM} step="any" value={effectiveZoom} onChange={(event) => changeZoom(Number(event.target.value))} />
+            <span className="w-12 text-center text-[10px] tabular-nums text-slate-500">{Math.round(effectiveZoom * 100)}%</span>
+            <Button variant="ghost" size="icon" className="size-7" aria-label="타임라인 확대" onClick={() => changeZoom(effectiveZoom * 1.5)}><ZoomIn size={14} /></Button>
           </div>
           <input ref={fileRef} className="hidden" type="file" accept="audio/*" multiple onChange={uploadTrack} />
           <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={uploading}>{uploading ? <LoaderCircle className="animate-spin" size={14} /> : <Upload size={14} />}{uploading ? "업로드 중" : "트랙 추가"}</Button>
@@ -302,7 +321,11 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
             onDrop={(event) => { event.preventDefault(); dragDepthRef.current = 0; setDraggingFiles(false); void uploadFiles(Array.from(event.dataTransfer.files)); }}
           >
             {draggingFiles && <div className="pointer-events-none absolute inset-3 z-50 grid place-items-center rounded-xl border-2 border-dashed border-cyan-300 bg-slate-950/90 text-sm font-bold text-cyan-200"><span className="flex items-center gap-2"><Upload size={18} />오디오 파일을 놓아 업로드</span></div>}
-            <div ref={timelineScrollRef} className="overflow-x-auto overscroll-x-contain pb-2" data-testid="timeline-scroll">
+            <div
+              ref={timelineScrollRef}
+              className="overflow-x-auto overscroll-x-contain pb-2"
+              data-testid="timeline-scroll"
+            >
               <div style={{ width: TRACK_HEADER_WIDTH + timelineWidth }}>
                 <div className="grid" style={{ gridTemplateColumns: `${TRACK_HEADER_WIDTH}px ${timelineWidth}px` }}>
                   <div className="sticky left-0 z-40 flex h-[72px] flex-col justify-center border-b border-r border-white/[0.08] bg-slate-950/95 px-4">
@@ -332,7 +355,7 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
                 })}
               </div>
             </div>
-            <p className="border-t border-white/[0.05] px-4 py-2 text-center text-[10px] text-slate-600">확대 후 아래 가로 스크롤로 이동 · Shift + 휠도 지원</p>
+            <p className="border-t border-white/[0.05] px-4 py-2 text-center text-[10px] text-slate-600">전체 보기 또는 400% 확대 · Ctrl/⌘ + 휠·핀치로 가로 줌 · Shift + 휠로 이동</p>
           </div>
 
           <aside className="border-t border-white/[0.07] bg-black/20 lg:border-l lg:border-t-0">
