@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Copy, Flag, LoaderCircle, Maximize2, MessageSquarePlus, Music2, Pause, Play, Plus, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, Copy, Flag, LoaderCircle, Maximize2, MessageSquarePlus, Music2, Pause, Play, Plus, Reply, Trash2, Upload, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -57,6 +57,9 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
   const [savingComment, setSavingComment] = useState(false);
   const [nickname, setNickname] = useState("");
   const [body, setBody] = useState("");
+  const [replyBody, setReplyBody] = useState("");
+  const [replyingToId, setReplyingToId] = useState<string | null>(null);
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [editingBarOffset, setEditingBarOffset] = useState(false);
@@ -156,6 +159,23 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
       const audio = audioRef.current;
       if (audio && audio.readyState >= HTMLMediaElement.HAVE_METADATA) audio.currentTime = safePosition;
     });
+  }
+
+  function scrollToComment(trackId: string, position: number) {
+    const viewport = timelineScrollRef.current;
+    if (!viewport) return;
+    const trackRow = viewport.querySelector<HTMLElement>(`[data-track-id="${trackId}"]`);
+    trackRow?.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+    requestAnimationFrame(() => {
+      const visibleTimelineWidth = Math.max(1, viewport.clientWidth - TRACK_HEADER_WIDTH);
+      const positionX = (position / timelineDuration) * timelineWidth;
+      viewport.scrollTo({ left: Math.max(0, positionX - visibleTimelineWidth / 2), behavior: "smooth" });
+    });
+  }
+
+  function openCommentLocation(trackId: string, position: number) {
+    seek(trackId, position, false);
+    scrollToComment(trackId, position);
   }
 
   async function uploadFiles(files: File[]) {
@@ -259,6 +279,7 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
       position_seconds: selectedPosition,
       author_name: cleanName,
       body: body.trim(),
+      parent_id: null,
     });
     if (commentError) setError(commentError.message);
     else {
@@ -268,6 +289,46 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
       await loadProject();
     }
     setSavingComment(false);
+  }
+
+  async function addReply(event: React.FormEvent, parent: TimelineComment) {
+    event.preventDefault();
+    const supabase = getSupabase();
+    if (!supabase || !project) return;
+    setSavingComment(true);
+    setError("");
+    const cleanName = nickname.trim();
+    const { error: replyError } = await supabase.from("comments").insert({
+      project_id: project.id,
+      track_id: parent.track_id,
+      position_seconds: parent.position_seconds,
+      author_name: cleanName,
+      body: replyBody.trim(),
+      parent_id: parent.id,
+    });
+    if (replyError) setError(replyError.message);
+    else {
+      localStorage.setItem("audiofigma-nickname", cleanName);
+      setReplyBody("");
+      setReplyingToId(null);
+      await loadProject();
+    }
+    setSavingComment(false);
+  }
+
+  async function deleteComment(comment: TimelineComment) {
+    if (!window.confirm(comment.parent_id ? "이 답글을 삭제할까요?" : "이 댓글과 모든 답글을 삭제할까요?")) return;
+    const supabase = getSupabase();
+    if (!supabase) return;
+    setDeletingCommentId(comment.id);
+    setError("");
+    const { error: deleteError } = await supabase.from("comments").delete().eq("id", comment.id);
+    if (deleteError) setError(deleteError.message);
+    else {
+      if (replyingToId === comment.id) setReplyingToId(null);
+      await loadProject();
+    }
+    setDeletingCommentId(null);
   }
 
   async function copyLink() {
@@ -340,9 +401,9 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
                     <div><span className="mx-auto grid size-14 place-items-center rounded-2xl border border-dashed border-cyan-300/30 bg-cyan-300/[0.04] text-cyan-300"><Music2 size={24} /></span><h2 className="mt-5 font-bold text-white">첫 오디오 트랙을 올려주세요</h2><p className="mt-2 text-sm text-slate-500">여기에 drag & drop · 최대 50MB · 다중 선택 가능</p><Button className="mt-5" onClick={() => fileRef.current?.click()}><Plus size={16} /> 트랙 추가</Button></div>
                   </div>
                 ) : tracks.map((track) => {
-                  const trackComments = comments.filter((comment) => comment.track_id === track.id);
+                  const trackComments = comments.filter((comment) => comment.track_id === track.id && !comment.parent_id);
                   return (
-                    <article key={track.id} className="grid border-b border-white/[0.06]" style={{ gridTemplateColumns: `${TRACK_HEADER_WIDTH}px ${timelineWidth}px` }}>
+                    <article key={track.id} data-track-id={track.id} className="grid border-b border-white/[0.06]" style={{ gridTemplateColumns: `${TRACK_HEADER_WIDTH}px ${timelineWidth}px` }}>
                       <div className="sticky left-0 z-40 min-w-0 border-r border-white/[0.08] bg-[#090c12] px-4 py-5">
                         <div className="flex items-center gap-2"><span className={`size-2 shrink-0 rounded-full ${track.id === activeTrack?.id ? "bg-cyan-300" : "bg-slate-700"}`} /><h2 className="truncate text-sm font-bold text-slate-200" title={track.name}>{track.name}</h2></div>
                         <p className="mt-2 pl-4 font-mono text-[10px] text-slate-600">{formatTime(track.duration_seconds)} · {trackComments.length} comments</p>
@@ -369,9 +430,42 @@ export function ProjectWorkspace({ slug }: { slug: string }) {
               </form>
             )}
             <div className="max-h-[620px] overflow-y-auto p-3">
-              {comments.length === 0 ? <p className="px-2 py-10 text-center text-xs leading-5 text-slate-600">파형의 위치를 누르면<br />첫 코멘트를 남길 수 있습니다.</p> : comments.map((comment) => {
+              {comments.length === 0 ? <p className="px-2 py-10 text-center text-xs leading-5 text-slate-600">파형의 위치를 누르면<br />첫 코멘트를 남길 수 있습니다.</p> : comments.filter((comment) => !comment.parent_id).map((comment) => {
                 const track = tracks.find((item) => item.id === comment.track_id);
-                return <button key={comment.id} className="mb-2 block w-full rounded-xl border border-transparent p-3 text-left hover:border-white/[0.07] hover:bg-white/[0.03]" onClick={() => seek(comment.track_id, comment.position_seconds, false)}><div className="flex items-center justify-between gap-3"><strong className="truncate text-xs text-slate-200">{comment.author_name}</strong><span data-testid="comment-position" className="shrink-0 font-mono text-[10px] text-amber-300">{formatTime(comment.position_seconds)} · {barAtTime(comment.position_seconds, project.bpm, project.bar_offset_seconds)}마디</span></div><p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-slate-400">{comment.body}</p><p className="mt-2 truncate text-[10px] text-slate-700">{track?.name}</p></button>;
+                const replies = comments.filter((reply) => reply.parent_id === comment.id);
+                return (
+                  <article key={comment.id} data-testid="comment-thread" className="mb-3 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.015]">
+                    <button className="block w-full p-3 text-left hover:bg-white/[0.03]" onClick={() => openCommentLocation(comment.track_id, comment.position_seconds)}>
+                      <div className="flex items-center justify-between gap-3"><strong className="truncate text-xs text-slate-200">{comment.author_name}</strong><span data-testid="comment-position" className="shrink-0 font-mono text-[10px] text-amber-300">{formatTime(comment.position_seconds)} · {barAtTime(comment.position_seconds, project.bpm, project.bar_offset_seconds)}마디</span></div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-5 text-slate-400">{comment.body}</p>
+                      <p className="mt-2 truncate text-[10px] text-slate-700">{track?.name}</p>
+                    </button>
+                    <div className="flex items-center justify-end gap-1 border-t border-white/[0.04] px-2 py-1">
+                      <Button variant="ghost" size="sm" className="h-7 text-[10px]" onClick={() => { setReplyingToId((current) => current === comment.id ? null : comment.id); setReplyBody(""); }}><Reply size={12} />답글</Button>
+                      <Button variant="ghost" size="sm" className="h-7 text-[10px] text-rose-300 hover:text-rose-200" disabled={deletingCommentId === comment.id} onClick={() => void deleteComment(comment)}>{deletingCommentId === comment.id ? <LoaderCircle className="animate-spin" size={12} /> : <Trash2 size={12} />}삭제</Button>
+                    </div>
+                    {replyingToId === comment.id && (
+                      <form onSubmit={(event) => void addReply(event, comment)} className="border-t border-cyan-300/10 bg-cyan-300/[0.025] p-3">
+                        <Input value={nickname} onChange={(event) => setNickname(event.target.value)} placeholder="닉네임 / 이름" maxLength={40} required />
+                        <Textarea className="mt-2 min-h-20" value={replyBody} onChange={(event) => setReplyBody(event.target.value)} placeholder="답글을 남겨주세요." maxLength={1000} required />
+                        <div className="mt-2 flex justify-end gap-2"><Button type="button" variant="ghost" size="sm" onClick={() => setReplyingToId(null)}>취소</Button><Button size="sm" disabled={savingComment}>{savingComment && <LoaderCircle className="animate-spin" size={12} />}답글 등록</Button></div>
+                      </form>
+                    )}
+                    {replies.length > 0 && (
+                      <div className="border-t border-white/[0.05] bg-black/15 px-3 py-2">
+                        {replies.map((reply) => (
+                          <div key={reply.id} data-testid="comment-reply" className="border-l border-cyan-300/20 py-2 pl-3">
+                            <button className="block w-full text-left" onClick={() => openCommentLocation(reply.track_id, reply.position_seconds)}>
+                              <div className="flex items-center justify-between gap-2"><strong className="text-[11px] text-slate-300">{reply.author_name}</strong><span data-testid="comment-position" className="font-mono text-[9px] text-amber-300/80">{formatTime(reply.position_seconds)} · {barAtTime(reply.position_seconds, project.bpm, project.bar_offset_seconds)}마디</span></div>
+                              <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-slate-500">{reply.body}</p>
+                            </button>
+                            <div className="mt-1 flex justify-end"><Button variant="ghost" size="sm" className="h-6 px-2 text-[9px] text-rose-300" disabled={deletingCommentId === reply.id} onClick={() => void deleteComment(reply)}>{deletingCommentId === reply.id ? <LoaderCircle className="animate-spin" size={10} /> : <Trash2 size={10} />}삭제</Button></div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </article>
+                );
               })}
             </div>
           </aside>

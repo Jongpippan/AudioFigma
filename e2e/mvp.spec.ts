@@ -116,4 +116,24 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   await page.getByRole("button", { name: "등록" }).click();
   await expect(page.getByText("UI comment verification", { exact: true })).toBeVisible();
   await expect(page.getByTestId("comment-position").last()).toHaveText(/\d+:\d+\.\d · -?\d+마디/);
+
+  await zoomControl.fill("4");
+  await page.getByTestId("timeline-scroll").evaluate((element) => { element.scrollLeft = 0; });
+  const thread = page.getByTestId("comment-thread").filter({ hasText: "UI comment verification" });
+  await thread.locator(":scope > button").first().click();
+  await expect.poll(() => page.getByTestId("timeline-scroll").evaluate((element) => element.scrollLeft)).toBeGreaterThan(0);
+
+  await thread.getByRole("button", { name: "답글" }).click();
+  await page.getByPlaceholder("답글을 남겨주세요.").fill("Reply UI verification");
+  await page.getByRole("button", { name: "답글 등록" }).click();
+  const reply = page.getByTestId("comment-reply").filter({ hasText: "Reply UI verification" });
+  await expect(reply).toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await reply.getByRole("button", { name: "삭제" }).click();
+  await expect(reply).toHaveCount(0);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await thread.getByRole("button", { name: "삭제" }).click();
+  await expect(page.getByText("UI comment verification", { exact: true })).toHaveCount(0);
 });

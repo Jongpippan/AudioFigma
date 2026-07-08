@@ -22,6 +22,7 @@ export type TimelineComment = {
   id: string;
   project_id: string;
   track_id: string;
+  parent_id: string | null;
   position_seconds: number;
   author_name: string;
   body: string;

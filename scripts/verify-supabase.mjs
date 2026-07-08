@@ -85,6 +85,7 @@ const realtimeResult = new Promise((resolve, reject) => {
         position_seconds: 0.5,
         author_name: "Verifier",
         body: "Realtime verification",
+        parent_id: null,
       });
       if (error) {
         clearTimeout(timeout);
@@ -103,6 +104,7 @@ const { error: invalidPositionError } = await supabase.from("comments").insert({
   position_seconds: 2,
   author_name: "Verifier",
   body: "This insert must fail",
+  parent_id: null,
 });
 assert(invalidPositionError, "트랙 길이를 넘는 댓글이 거부되지 않았습니다.");
 
@@ -116,6 +118,27 @@ const { data: comments, error: commentsError } = await supabase
   .eq("project_id", project.id);
 if (commentsError) throw commentsError;
 assert(comments.length === 1, "검증 댓글 수가 예상과 다릅니다.");
+
+const { data: reply, error: replyError } = await supabase.from("comments").insert({
+  project_id: project.id,
+  track_id: track.id,
+  position_seconds: 0.5,
+  author_name: "Reply verifier",
+  body: "Reply verification",
+  parent_id: comments[0].id,
+}).select("*").single();
+if (replyError) throw replyError;
+assert(reply.parent_id === comments[0].id, "답글 관계가 저장되지 않았습니다.");
+
+const { error: deleteReplyError } = await supabase.from("comments").delete().eq("id", reply.id);
+if (deleteReplyError) throw deleteReplyError;
+
+const { count: remainingCommentCount, error: countError } = await supabase
+  .from("comments")
+  .select("*", { count: "exact", head: true })
+  .eq("project_id", project.id);
+if (countError) throw countError;
+assert(remainingCommentCount === 1, "답글 삭제 후 댓글 수가 예상과 다릅니다.");
 
 console.log(`Supabase MVP verification passed: /p/${slug}`);
 console.log("검증용 프로젝트는 Supabase Dashboard에서 삭제할 수 있습니다.");

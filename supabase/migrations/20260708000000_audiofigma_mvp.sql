@@ -24,6 +24,7 @@ create table public.comments (
   id uuid primary key default gen_random_uuid(),
   project_id uuid not null references public.projects(id) on delete cascade,
   track_id uuid not null references public.tracks(id) on delete cascade,
+  parent_id uuid references public.comments(id) on delete cascade,
   position_seconds numeric(12,3) not null check (position_seconds >= 0),
   author_name text not null check (char_length(author_name) between 1 and 40),
   body text not null check (char_length(body) between 1 and 1000),

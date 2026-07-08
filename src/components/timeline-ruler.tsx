@@ -64,7 +64,7 @@ export function TimelineRuler({ duration, bpm, offset, currentTime, pixelsPerSec
         })}
       </div>
       {offset >= 0 && offset <= duration && <div className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-amber-300" style={{ left: `${(offset / duration) * 100}%` }} aria-hidden="true" />}
-      <div className="pointer-events-none absolute inset-y-0 z-20 w-px bg-cyan-200 shadow-[0_0_8px_rgba(165,243,252,.7)]" style={{ left: `${(currentTime / duration) * 100}%` }} />
+      <div data-testid="timeline-playhead" className="pointer-events-none absolute inset-y-0 z-20 w-px bg-cyan-200 shadow-[0_0_8px_rgba(165,243,252,.7)]" style={{ left: `${(currentTime / duration) * 100}%` }} />
     </div>
   );
 }
