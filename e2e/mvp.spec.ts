@@ -49,6 +49,8 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
   await page.getByRole("button", { name: /프로젝트 만들기/ }).click();
   await expect(page).toHaveURL(/\/p\/[a-z0-9-]+$/);
   await expect(page.getByRole("heading", { name: "Browser E2E verification" })).toBeVisible();
+  await expect(page.getByLabel("BPM")).toHaveValue("128");
+  await expect(page.getByText("Bars", { exact: true })).toBeVisible();
 
   await page.locator('input[type="file"]').setInputFiles({
     name: "browser-verification.wav",
@@ -56,6 +58,17 @@ test("UI에서 프로젝트, 트랙, 위치 댓글을 생성한다", async ({ pa
     buffer: createSilentWav(),
   });
   await expect(page.getByText("browser-verification.wav", { exact: true }).first()).toBeVisible();
+
+  const timingSaved = page.waitForResponse((response) =>
+    response.url().includes("/rest/v1/projects")
+    && response.request().method() === "PATCH"
+    && response.ok(),
+  );
+  await page.getByLabel("1마디 시작").fill("0.25");
+  await page.getByLabel("1마디 시작").blur();
+  await timingSaved;
+  await page.reload();
+  await expect(page.getByLabel("1마디 시작")).toHaveValue("0.25");
 
   await page.getByRole("slider", { name: "파형에서 재생 또는 댓글 위치 선택" }).click({ position: { x: 160, y: 80 } });
   await page.getByPlaceholder("닉네임 / 이름").fill("Browser verifier");
