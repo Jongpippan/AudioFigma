@@ -23,6 +23,8 @@ test("홈에서 프로젝트 생성 진입점을 표시한다", async ({ page })
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /음악을 들은 그 순간에/ })).toBeVisible();
   await expect(page.getByRole("button", { name: /프로젝트 만들기/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "공개 곡 목록" })).toBeVisible();
+  await expect(page.getByText("MVP verification", { exact: true }).first()).toBeVisible();
 });
 
 test("Supabase 검증 프로젝트의 파형과 위치 댓글을 표시한다", async ({ page }) => {

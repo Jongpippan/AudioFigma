@@ -1,5 +1,6 @@
 import { Clock3, Link2, MessageSquareText, UploadCloud, Waves } from "lucide-react";
 import { CreateProjectForm } from "@/components/create-project-form";
+import { PublicProjectList } from "@/components/public-project-list";
 
 const features = [
   { icon: UploadCloud, title: "트랙 업로드", body: "MP3, WAV 등 오디오를 여러 트랙으로 올립니다." },
@@ -10,7 +11,7 @@ const features = [
 export default function Home() {
   return (
     <main>
-      <section className="mx-auto max-w-5xl px-4 pb-24 pt-24 text-center sm:px-6 sm:pt-32">
+      <section className="mx-auto max-w-5xl px-4 pb-20 pt-24 text-center sm:px-6 sm:pt-32">
         <div className="mx-auto mb-6 flex w-fit items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/[0.06] px-3 py-1.5 text-xs font-medium text-cyan-300">
           <Link2 size={13} /> 로그인 없이 링크 하나로 공유
         </div>
@@ -22,6 +23,7 @@ export default function Home() {
         </p>
         <CreateProjectForm />
       </section>
+      <PublicProjectList />
       <section className="border-y border-white/[0.06] bg-black/20">
         <div className="mx-auto grid max-w-5xl gap-px bg-white/[0.06] sm:grid-cols-3">
           {features.map(({ icon: Icon, title, body }) => (
